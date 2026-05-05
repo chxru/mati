@@ -18,10 +18,12 @@ var migrations = []migration{
 		ID:   1,
 		Name: "create_entries_table",
 		SQL: `
-create table if not exists entries (
-	id integer primary key,
-	text text not null,
-	created_at text not null default current_timestamp
+create table entries (
+	client_id text not null unique,
+	server_id integer primary key autoincrement,
+	name text not null,
+	device_name text not null,
+	created_at text not null
 )
 `,
 	},
