@@ -15,13 +15,20 @@ import (
 
 var db *sql.DB
 
-func Init(ctx context.Context) error {
+type Target string
+
+const (
+	TargetServer Target = "server"
+	TargetCLI    Target = "cli"
+)
+
+func Init(ctx context.Context, target Target) error {
 	if db != nil {
 		slog.DebugContext(ctx, "database already initialized")
 		return nil
 	}
 
-	dbPath, err := resolveDBPath()
+	dbPath, err := resolveDBPath(target)
 	if err != nil {
 		return fmt.Errorf("resolve db path: %w", err)
 	}
@@ -42,7 +49,7 @@ func Init(ctx context.Context) error {
 	}
 	slog.InfoContext(ctx, "sqlite connection ping succeeded")
 
-	if err := runMigrations(ctx, conn); err != nil {
+	if err := runMigrations(ctx, conn, target); err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("run migrations: %w", err)
 	}
@@ -69,7 +76,7 @@ func Close() error {
 	return err
 }
 
-func resolveDBPath() (string, error) {
+func resolveDBPath(target Target) (string, error) {
 	if envPath := os.Getenv("MARK_TIME_DB_PATH"); envPath != "" {
 		envPath = strings.TrimSpace(envPath)
 		if envPath == "" {
@@ -93,7 +100,15 @@ func resolveDBPath() (string, error) {
 		return "", err
 	}
 
-	defaultPath := filepath.Join(configDir, "mark-time", "db.sqlite")
+	defaultFilename := "db.sqlite"
+	switch target {
+	case TargetServer:
+		defaultFilename = "server.sqlite"
+	case TargetCLI:
+		defaultFilename = "cli.sqlite"
+	}
+
+	defaultPath := filepath.Join(configDir, "mark-time", defaultFilename)
 	if err := os.MkdirAll(filepath.Dir(defaultPath), 0o755); err != nil {
 		return "", err
 	}

@@ -7,20 +7,30 @@ import (
 	"log/slog"
 )
 
+type migrationScope string
+
+const (
+	migrationScopeBoth   migrationScope = "both"
+	migrationScopeServer migrationScope = "server"
+	migrationScopeCLI    migrationScope = "cli"
+)
+
 type migration struct {
-	ID   int
-	Name string
-	SQL  string
+	ID    int
+	Name  string
+	Scope migrationScope
+	SQL   string
 }
 
 var migrations = []migration{
 	{
-		ID:   1,
-		Name: "create_entries_table",
+		ID:    1,
+		Name:  "create_server_entries_table",
+		Scope: migrationScopeServer,
 		SQL: `
 create table entries (
-	client_id text not null unique,
 	server_id integer primary key autoincrement,
+	client_id text not null unique,
 	name text not null,
 	device_name text not null,
 	created_at text not null
@@ -28,8 +38,9 @@ create table entries (
 `,
 	},
 	{
-		ID:   2,
-		Name: "create_sessions_table",
+		ID:    2,
+		Name:  "create_sessions_table",
+		Scope: migrationScopeServer,
 		SQL: `
 create table sessions (
 	token_hash text not null unique,
@@ -39,8 +50,9 @@ create table sessions (
 `,
 	},
 	{
-		ID:   3,
-		Name: "create_api_tokens_table",
+		ID:    3,
+		Name:  "create_api_tokens_table",
+		Scope: migrationScopeServer,
 		SQL: `
 create table api_tokens (
 	id integer primary key autoincrement,
@@ -52,10 +64,41 @@ create table api_tokens (
 )
 `,
 	},
+	{
+		ID:    4,
+		Name:  "create_cli_entries_table",
+		Scope: migrationScopeCLI,
+		SQL: `
+create table entries (
+	local_id integer primary key autoincrement,
+	client_id text not null unique,
+	server_id integer unique,
+	name text not null,
+	device_name text not null,
+	created_at text not null,
+	needs_push integer not null default 1
+)
+`,
+	},
+	{
+		ID:    5,
+		Name:  "create_cli_sync_state_table",
+		Scope: migrationScopeCLI,
+		SQL: `
+create table sync_state (
+	id integer primary key check (id = 1),
+	last_pushed_local_id integer not null default 0,
+	last_pulled_server_id integer not null default 0
+);
+
+insert into sync_state (id, last_pushed_local_id, last_pulled_server_id)
+values (1, 0, 0);
+`,
+	},
 }
 
-func runMigrations(ctx context.Context, db *sql.DB) error {
-	slog.InfoContext(ctx, "starting database migrations")
+func runMigrations(ctx context.Context, db *sql.DB, target Target) error {
+	slog.InfoContext(ctx, "starting database migrations", slog.String("target", string(target)))
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -72,32 +115,35 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 create table if not exists schema_migrations (
 	id integer primary key,
 	name text not null,
+	scope text not null,
 	applied_at text not null default current_timestamp
 )
 `); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	var lastAppliedID int
-	if err = tx.QueryRowContext(ctx, `select coalesce(max(id), 0) from schema_migrations`).Scan(&lastAppliedID); err != nil {
-		return fmt.Errorf("query last migration id: %w", err)
-	}
-	slog.InfoContext(ctx, "loaded last applied migration", slog.Int("last_id", lastAppliedID))
-
 	appliedCount := 0
 
 	for _, migration := range migrations {
-		if migration.ID <= lastAppliedID {
+		if !shouldRunMigration(migration.Scope, target) {
 			continue
 		}
 
-		slog.InfoContext(ctx, "applying migration", slog.Int("id", migration.ID), slog.String("name", migration.Name))
+		applied, checkErr := isMigrationApplied(ctx, tx, migration.ID)
+		if checkErr != nil {
+			return checkErr
+		}
+		if applied {
+			continue
+		}
+
+		slog.InfoContext(ctx, "applying migration", slog.Int("id", migration.ID), slog.String("name", migration.Name), slog.String("scope", string(migration.Scope)))
 
 		if _, err = tx.ExecContext(ctx, migration.SQL); err != nil {
 			return fmt.Errorf("apply migration %d (%s): %w", migration.ID, migration.Name, err)
 		}
 
-		if _, err = tx.ExecContext(ctx, `insert into schema_migrations (id, name) values (?, ?)`, migration.ID, migration.Name); err != nil {
+		if _, err = tx.ExecContext(ctx, `insert into schema_migrations (id, name, scope) values (?, ?, ?)`, migration.ID, migration.Name, migration.Scope); err != nil {
 			return fmt.Errorf("record migration %d (%s): %w", migration.ID, migration.Name, err)
 		}
 
@@ -108,7 +154,28 @@ create table if not exists schema_migrations (
 		return fmt.Errorf("commit migrations transaction: %w", err)
 	}
 
-	slog.InfoContext(ctx, "database migrations finished", slog.Int("applied", appliedCount), slog.Int("total", len(migrations)))
+	slog.InfoContext(ctx, "database migrations finished", slog.Int("applied", appliedCount), slog.Int("total", len(migrations)), slog.String("target", string(target)))
 
 	return nil
+}
+
+func shouldRunMigration(scope migrationScope, target Target) bool {
+	if scope == migrationScopeBoth {
+		return true
+	}
+
+	return string(scope) == string(target)
+}
+
+func isMigrationApplied(ctx context.Context, tx *sql.Tx, id int) (bool, error) {
+	var exists int
+	if err := tx.QueryRowContext(ctx, `select 1 from schema_migrations where id = ? limit 1`, id).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("query migration %d: %w", id, err)
+	}
+
+	return true, nil
 }

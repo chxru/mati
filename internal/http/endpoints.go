@@ -30,6 +30,24 @@ type createEntryRequest struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+type syncRequest struct {
+	LastPulledServerID int64                `json:"last_pulled_server_id"`
+	Entries            []createEntryRequest `json:"entries"`
+}
+
+type syncEntryResponse struct {
+	ServerID   int64  `json:"server_id"`
+	ClientID   string `json:"client_id"`
+	Name       string `json:"name"`
+	DeviceName string `json:"device_name"`
+	CreatedAt  string `json:"created_at"`
+}
+
+type syncResponse struct {
+	Entries      []syncEntryResponse `json:"entries"`
+	NextServerID int64               `json:"next_server_id"`
+}
+
 type pageData struct {
 	Entries        []entryRow
 	APITokens      []apiTokenRow
@@ -334,6 +352,68 @@ func initiateEndpoints(router *http.ServeMux) {
 		slog.InfoContext(r.Context(), "create entries succeeded", slog.Int("inserted", len(payload)))
 		w.WriteHeader(http.StatusCreated)
 	})))
+
+	router.Handle("/sync", requireAccessAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var payload syncRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid json payload", http.StatusBadRequest)
+			return
+		}
+
+		if payload.LastPulledServerID < 0 {
+			http.Error(w, "last_pulled_server_id must be >= 0", http.StatusBadRequest)
+			return
+		}
+
+		for idx, entry := range payload.Entries {
+			if _, err := uuid.Parse(entry.ID); err != nil {
+				http.Error(w, fmt.Sprintf("entries[%d].id must be a valid uuid", idx), http.StatusBadRequest)
+				return
+			}
+
+			if strings.TrimSpace(entry.Name) == "" {
+				http.Error(w, fmt.Sprintf("entries[%d].name is required", idx), http.StatusBadRequest)
+				return
+			}
+
+			if strings.TrimSpace(entry.DeviceName) == "" {
+				http.Error(w, fmt.Sprintf("entries[%d].device_name is required", idx), http.StatusBadRequest)
+				return
+			}
+
+			if _, err := time.Parse(time.RFC3339, entry.CreatedAt); err != nil {
+				http.Error(w, fmt.Sprintf("entries[%d].created_at must be RFC3339", idx), http.StatusBadRequest)
+				return
+			}
+		}
+
+		rowsToInsert := make([]entryRow, 0, len(payload.Entries))
+		for _, entry := range payload.Entries {
+			rowsToInsert = append(rowsToInsert, entryRow{ClientID: entry.ID, Name: entry.Name, DeviceName: entry.DeviceName, CreatedAt: entry.CreatedAt})
+		}
+
+		if err := insertEntriesIgnoreDuplicates(r.Context(), rowsToInsert); err != nil {
+			http.Error(w, "failed to insert entries", http.StatusInternalServerError)
+			return
+		}
+
+		entries, nextServerID, err := listEntriesAfterServerID(r.Context(), payload.LastPulledServerID)
+		if err != nil {
+			http.Error(w, "failed to load sync entries", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(syncResponse{Entries: entries, NextServerID: nextServerID}); err != nil {
+			http.Error(w, "failed to encode response", http.StatusInternalServerError)
+			return
+		}
+	})))
 }
 
 func isUniqueConstraintError(err error) bool {
@@ -359,6 +439,39 @@ func insertEntries(ctx context.Context, entries []entryRow) error {
 		_, err = tx.ExecContext(
 			ctx,
 			`insert into entries (client_id, name, device_name, created_at) values (?, ?, ?, ?)`,
+			entry.ClientID,
+			entry.Name,
+			entry.DeviceName,
+			entry.CreatedAt,
+		)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+func insertEntriesIgnoreDuplicates(ctx context.Context, entries []entryRow) error {
+	database := db.DB()
+	if database == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+
+	for _, entry := range entries {
+		_, err = tx.ExecContext(
+			ctx,
+			`insert into entries (client_id, name, device_name, created_at) values (?, ?, ?, ?) on conflict(client_id) do nothing`,
 			entry.ClientID,
 			entry.Name,
 			entry.DeviceName,
@@ -407,6 +520,43 @@ func listEntries(ctx context.Context) ([]entryRow, error) {
 	}
 
 	return entries, nil
+}
+
+func listEntriesAfterServerID(ctx context.Context, lastPulledServerID int64) ([]syncEntryResponse, int64, error) {
+	database := db.DB()
+	if database == nil {
+		return nil, 0, fmt.Errorf("database is not initialized")
+	}
+
+	rows, err := database.QueryContext(ctx, `
+		select server_id, client_id, name, device_name, created_at
+		from entries
+		where server_id > ?
+		order by server_id asc
+	`, lastPulledServerID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	entries := make([]syncEntryResponse, 0)
+	nextServerID := lastPulledServerID
+	for rows.Next() {
+		var entry syncEntryResponse
+		if err := rows.Scan(&entry.ServerID, &entry.ClientID, &entry.Name, &entry.DeviceName, &entry.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		if entry.ServerID > nextServerID {
+			nextServerID = entry.ServerID
+		}
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return entries, nextServerID, nil
 }
 
 func requestServerURL(r *http.Request) string {
