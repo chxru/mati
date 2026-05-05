@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Mark Time</title>
+
+        <link rel="stylesheet" href="/static/terminal.css" />
+        <script src="/static/htmx.min.js"></script>
+    </head>
+    <body>
+        <main style="max-width: 860px; margin: 0 auto; padding: 20px">
+            <h1>Marks</h1>
+
+            <fieldset style="display: block">
+                <legend>Create Entry</legend>
+                <form
+                    hx-post="/entries"
+                    hx-target="#marks-list"
+                    hx-swap="outerHTML"
+                    hx-on::after-request="if(event.detail.successful) this.reset()"
+                >
+                    <label for="name">Name</label>
+                    <input id="name" name="name" type="text" required />
+                    <button type="submit">Create</button>
+                </form>
+            </fieldset>
+
+            {{ template "marks_list" . }}
+        </main>
+    </body>
+</html>

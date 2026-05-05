@@ -1,0 +1,27 @@
+{{ define "marks_list" }}
+<section id="marks-list">
+    <h2>Latest Marks</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Device</th>
+                <th>Created At</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ if .Entries }} {{ range .Entries }}
+            <tr>
+                <td>{{ .Name }}</td>
+                <td>{{ .DeviceName }}</td>
+                <td><code>{{ .CreatedAt }}</code></td>
+            </tr>
+            {{ end }} {{ else }}
+            <tr>
+                <td colspan="3">No marks yet.</td>
+            </tr>
+            {{ end }}
+        </tbody>
+    </table>
+</section>
+{{ end }}
