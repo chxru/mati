@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/99designs/keyring"
-	"github.com/chxru/mark-time/internal/db"
+	"github.com/chxru/mati/internal/db"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"

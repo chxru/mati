@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/chxru/mark-time/internal/db"
-	"github.com/google/uuid"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -14,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chxru/mati/internal/db"
+	"github.com/google/uuid"
 )
 
 type entryRow struct {

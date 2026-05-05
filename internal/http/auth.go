@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chxru/mark-time/internal/db"
+	"github.com/chxru/mati/internal/db"
 	"golang.org/x/crypto/bcrypt"
 )
 

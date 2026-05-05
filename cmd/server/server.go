@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/chxru/mark-time/internal/db"
-	"github.com/chxru/mark-time/internal/http"
+	"github.com/chxru/mati/internal/db"
+	"github.com/chxru/mati/internal/http"
 )
 
 func main() {
