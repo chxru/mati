@@ -17,6 +17,9 @@ func (s *HttpServer) Start(ctx context.Context) error {
 		return errors.New("addr is empty")
 	}
 
+	logHandler := &slogContextHandler{Handler: slog.Default().Handler()}
+	slog.SetDefault(slog.New(logHandler))
+
 	router := http.NewServeMux()
 	middlewares := createMiddlewareStack(corsMiddleware, requestIdMiddleware, loggingMiddleware)
 	initiateEndpoints(router)
