@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>API Tokens</title>
+
+        <link rel="stylesheet" href="/static/terminal.css" />
+    </head>
+    <body>
+        <main style="max-width: 860px; margin: 0 auto; padding: 20px">
+            <header
+                style="
+                    display: flex;
+                    align-items: baseline;
+                    justify-content: space-between;
+                    gap: 12px;
+                    margin-bottom: 20px;
+                "
+            >
+                <h1 style="margin: 0">API Tokens</h1>
+                <nav
+                    style="
+                        display: flex;
+                        align-items: baseline;
+                        gap: 14px;
+                        font-size: 0.95rem;
+                        text-transform: uppercase;
+                        letter-spacing: 0.04em;
+                    "
+                >
+                    <a href="/">Back to Marks</a>
+                    <form
+                        method="post"
+                        action="/logout"
+                        style="margin: 0; display: inline"
+                    >
+                        <button
+                            type="submit"
+                            style="
+                                padding: 0;
+                                border: 0;
+                                background: none;
+                                font: inherit;
+                                text-transform: inherit;
+                                letter-spacing: inherit;
+                                color: inherit;
+                                text-decoration: underline;
+                                cursor: pointer;
+                            "
+                        >
+                            Logout
+                        </button>
+                    </form>
+                </nav>
+            </header>
+
+            <fieldset style="display: block; margin-bottom: 20px">
+                <legend>Create API Token</legend>
+                <form method="post" action="/tokens">
+                    <label for="label">Label</label>
+                    <input
+                        id="label"
+                        name="label"
+                        type="text"
+                        placeholder="laptop"
+                        required
+                    />
+                    <button type="submit">Create Token</button>
+                </form>
+
+                {{ if .CreatedToken }}
+                <p>
+                    New token (shown once):
+                    <code>{{ .CreatedToken }}</code>
+                </p>
+                {{ end }}
+            </fieldset>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Label</th>
+                        <th>Created At</th>
+                        <th>Last Used</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{ if .APITokens }} {{ range .APITokens }}
+                    <tr>
+                        <td>{{ .Label }}</td>
+                        <td><code>{{ .CreatedAt }}</code></td>
+                        <td>
+                            {{ if .LastUsedAt.Valid }}
+                            <code>{{ .LastUsedAt.String }}</code>
+                            {{ else }}never{{ end }}
+                        </td>
+                        <td>
+                            {{ if .RevokedAt.Valid }}revoked{{ else }}active{{
+                            end }}
+                        </td>
+                        <td>
+                            {{ if .RevokedAt.Valid }} - {{ else }}
+                            <form
+                                method="post"
+                                action="/tokens/revoke"
+                                style="margin: 0"
+                            >
+                                <input
+                                    type="hidden"
+                                    name="id"
+                                    value="{{ .ID }}"
+                                />
+                                <button type="submit">Revoke</button>
+                            </form>
+                            {{ end }}
+                        </td>
+                    </tr>
+                    {{ end }} {{ else }}
+                    <tr>
+                        <td colspan="5">No API tokens yet.</td>
+                    </tr>
+                    {{ end }}
+                </tbody>
+            </table>
+        </main>
+    </body>
+</html>

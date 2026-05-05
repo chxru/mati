@@ -27,6 +27,31 @@ create table entries (
 )
 `,
 	},
+	{
+		ID:   2,
+		Name: "create_sessions_table",
+		SQL: `
+create table sessions (
+	token_hash text not null unique,
+	created_at text not null,
+	expires_at text not null
+)
+`,
+	},
+	{
+		ID:   3,
+		Name: "create_api_tokens_table",
+		SQL: `
+create table api_tokens (
+	id integer primary key autoincrement,
+	label text not null,
+	token_hash text not null unique,
+	created_at text not null,
+	last_used_at text,
+	revoked_at text
+)
+`,
+	},
 }
 
 func runMigrations(ctx context.Context, db *sql.DB) error {

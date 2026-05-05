@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Mark Time Login</title>
+
+        <link rel="stylesheet" href="/static/terminal.css" />
+    </head>
+    <body>
+        <main style="max-width: 520px; margin: 0 auto; padding: 20px">
+            <h1>Login</h1>
+            <form method="post" action="/login" style="display: flex; flex-direction: column; gap: 14px">
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                    <label for="username">Username</label>
+                    <input id="username" name="username" type="text" required />
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                    <label for="password">Password</label>
+                    <input id="password" name="password" type="password" required />
+                </div>
+
+                <div>
+                    <button type="submit">Login</button>
+                </div>
+            </form>
+        </main>
+    </body>
+</html>

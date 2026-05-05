@@ -12,6 +12,8 @@ type HttpServer struct {
 	Addr string
 }
 
+var ownerConfig ownerAuthConfig
+
 func (s *HttpServer) Start(ctx context.Context) error {
 	if s.Addr == "" {
 		return errors.New("addr is empty")
@@ -20,8 +22,14 @@ func (s *HttpServer) Start(ctx context.Context) error {
 	logHandler := &slogContextHandler{Handler: slog.Default().Handler()}
 	slog.SetDefault(slog.New(logHandler))
 
+	cfg, err := loadOwnerAuthConfig()
+	if err != nil {
+		return fmt.Errorf("load owner auth config: %w", err)
+	}
+	ownerConfig = cfg
+
 	router := http.NewServeMux()
-	middlewares := createMiddlewareStack(corsMiddleware, requestIdMiddleware, loggingMiddleware)
+	middlewares := createMiddlewareStack(corsMiddleware, requestIdMiddleware, loggingMiddleware, loadAuthMiddleware)
 	initiateEndpoints(router)
 
 	server := http.Server{

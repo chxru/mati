@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,18 +30,22 @@ type createEntryRequest struct {
 }
 
 type pageData struct {
-	Entries []entryRow
+	Entries      []entryRow
+	APITokens    []apiTokenRow
+	CreatedToken string
 }
 
 var pageTemplates = template.Must(template.ParseFiles(
 	filepath.Join("web", "templates", "index.html"),
 	filepath.Join("web", "templates", "marks_list.html"),
+	filepath.Join("web", "templates", "login.html"),
+	filepath.Join("web", "templates", "token.html"),
 ))
 
 func initiateEndpoints(router *http.ServeMux) {
 	router.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join("web", "static")))))
 
-	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	router.Handle("/", requireSessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -61,13 +66,92 @@ func initiateEndpoints(router *http.ServeMux) {
 			http.Error(w, "failed to render page", http.StatusInternalServerError)
 			return
 		}
+	})))
+
+	router.Handle("/token", requireSessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		tokens, err := listAPITokens(r.Context())
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed loading api tokens", slog.Any("error", err))
+			http.Error(w, "failed to load tokens", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := pageTemplates.ExecuteTemplate(w, "token.html", pageData{APITokens: tokens}); err != nil {
+			http.Error(w, "failed to render token page", http.StatusInternalServerError)
+		}
+	})))
+
+	router.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := pageTemplates.ExecuteTemplate(w, "login.html", nil); err != nil {
+				http.Error(w, "failed to render login", http.StatusInternalServerError)
+			}
+		case http.MethodPost:
+			username := strings.TrimSpace(r.FormValue("username"))
+			password := r.FormValue("password")
+			if !verifyOwnerCredentials(ownerConfig, username, password) {
+				http.Error(w, "invalid credentials", http.StatusUnauthorized)
+				return
+			}
+
+			token, err := createSession(r.Context(), 30*24*time.Hour)
+			if err != nil {
+				slog.ErrorContext(r.Context(), "failed creating session", slog.Any("error", err))
+				http.Error(w, "failed to login", http.StatusInternalServerError)
+				return
+			}
+
+			http.SetCookie(w, &http.Cookie{
+				Name:     sessionCookieName,
+				Value:    token,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+				Secure:   r.TLS != nil,
+				MaxAge:   int((30 * 24 * time.Hour).Seconds()),
+			})
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
+
+	router.Handle("/logout", requireSessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		state := getAuthState(r.Context())
+		if err := deleteSession(r.Context(), state.SessionTokenHash); err != nil {
+			slog.ErrorContext(r.Context(), "failed deleting session", slog.Any("error", err))
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   r.TLS != nil,
+			MaxAge:   -1,
+		})
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	})))
 
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "OK")
 	})
 
-	router.HandleFunc("/entries", func(w http.ResponseWriter, r *http.Request) {
+	router.Handle("/entries", requireAccessAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -105,9 +189,61 @@ func initiateEndpoints(router *http.ServeMux) {
 			http.Error(w, "failed to render entries", http.StatusInternalServerError)
 			return
 		}
-	})
+	})))
 
-	router.HandleFunc("/create", func(w http.ResponseWriter, r *http.Request) {
+	router.Handle("/tokens", requireSessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		label := strings.TrimSpace(r.FormValue("label"))
+		if label == "" {
+			http.Error(w, "label is required", http.StatusBadRequest)
+			return
+		}
+
+		token, err := createAPIToken(r.Context(), label)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed creating api token", slog.Any("error", err))
+			http.Error(w, "failed creating token", http.StatusInternalServerError)
+			return
+		}
+
+		tokens, err := listAPITokens(r.Context())
+		if err != nil {
+			http.Error(w, "failed to load tokens", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := pageTemplates.ExecuteTemplate(w, "token.html", pageData{APITokens: tokens, CreatedToken: token}); err != nil {
+			http.Error(w, "failed to render page", http.StatusInternalServerError)
+		}
+	})))
+
+	router.Handle("/tokens/revoke", requireSessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		idStr := strings.TrimSpace(r.FormValue("id"))
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid token id", http.StatusBadRequest)
+			return
+		}
+
+		if err := revokeAPIToken(r.Context(), id); err != nil {
+			http.Error(w, "failed to revoke token", http.StatusInternalServerError)
+			return
+		}
+
+		http.Redirect(w, r, "/token", http.StatusSeeOther)
+	})))
+
+	router.Handle("/create", requireAccessAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slog.InfoContext(r.Context(), "received create request", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 
 		if r.Method != http.MethodPost {
@@ -181,7 +317,7 @@ func initiateEndpoints(router *http.ServeMux) {
 
 		slog.InfoContext(r.Context(), "create entries succeeded", slog.Int("inserted", len(payload)))
 		w.WriteHeader(http.StatusCreated)
-	})
+	})))
 }
 
 func isUniqueConstraintError(err error) bool {

@@ -10,7 +10,51 @@
     </head>
     <body>
         <main style="max-width: 860px; margin: 0 auto; padding: 20px">
-            <h1>Marks</h1>
+            <header
+                style="
+                    display: flex;
+                    align-items: baseline;
+                    justify-content: space-between;
+                    gap: 12px;
+                    margin-bottom: 20px;
+                "
+            >
+                <h1 style="margin: 0">Marks</h1>
+                <nav
+                    style="
+                        display: flex;
+                        align-items: baseline;
+                        gap: 14px;
+                        font-size: 0.95rem;
+                        text-transform: uppercase;
+                        letter-spacing: 0.04em;
+                    "
+                >
+                    <a href="/token">Manage API Tokens</a>
+                    <form
+                        method="post"
+                        action="/logout"
+                        style="margin: 0; display: inline"
+                    >
+                        <button
+                            type="submit"
+                            style="
+                                padding: 0;
+                                border: 0;
+                                background: none;
+                                font: inherit;
+                                text-transform: inherit;
+                                letter-spacing: inherit;
+                                color: inherit;
+                                text-decoration: underline;
+                                cursor: pointer;
+                            "
+                        >
+                            Logout
+                        </button>
+                    </form>
+                </nav>
+            </header>
 
             <fieldset style="display: block">
                 <legend>Create Entry</legend>
