@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,9 +31,11 @@ type createEntryRequest struct {
 }
 
 type pageData struct {
-	Entries      []entryRow
-	APITokens    []apiTokenRow
-	CreatedToken string
+	Entries        []entryRow
+	APITokens      []apiTokenRow
+	CreatedToken   string
+	CreatedServer  string
+	CreatedConnect string
 }
 
 var pageTemplates = template.Must(template.ParseFiles(
@@ -151,6 +154,16 @@ func initiateEndpoints(router *http.ServeMux) {
 		fmt.Fprint(w, "OK")
 	})
 
+	router.Handle("/auth/validate", requireAccessAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})))
+
 	router.Handle("/entries", requireAccessAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -210,6 +223,9 @@ func initiateEndpoints(router *http.ServeMux) {
 			return
 		}
 
+		serverURL := requestServerURL(r)
+		connectString := buildCLIConnectString(serverURL, token)
+
 		tokens, err := listAPITokens(r.Context())
 		if err != nil {
 			http.Error(w, "failed to load tokens", http.StatusInternalServerError)
@@ -217,7 +233,7 @@ func initiateEndpoints(router *http.ServeMux) {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := pageTemplates.ExecuteTemplate(w, "token.html", pageData{APITokens: tokens, CreatedToken: token}); err != nil {
+		if err := pageTemplates.ExecuteTemplate(w, "token.html", pageData{APITokens: tokens, CreatedToken: token, CreatedServer: serverURL, CreatedConnect: connectString}); err != nil {
 			http.Error(w, "failed to render page", http.StatusInternalServerError)
 		}
 	})))
@@ -391,4 +407,17 @@ func listEntries(ctx context.Context) ([]entryRow, error) {
 	}
 
 	return entries, nil
+}
+
+func requestServerURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+
+	return fmt.Sprintf("%s://%s", scheme, r.Host)
+}
+
+func buildCLIConnectString(serverURL, token string) string {
+	return fmt.Sprintf("marktime://auth?server=%s&token=%s", url.QueryEscape(serverURL), url.QueryEscape(token))
 }
