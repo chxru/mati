@@ -561,12 +561,20 @@ func listEntriesAfterServerID(ctx context.Context, lastPulledServerID int64) ([]
 }
 
 func requestServerURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
+	scheme := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0])
+	if scheme == "" {
+		scheme = "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
 	}
 
-	return fmt.Sprintf("%s://%s", scheme, r.Host)
+	host := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
+	if host == "" {
+		host = r.Host
+	}
+
+	return fmt.Sprintf("%s://%s", scheme, host)
 }
 
 func buildCLIConnectString(serverURL, token string) string {

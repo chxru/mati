@@ -530,7 +530,9 @@ func syncWithServer(cred savedCredential, reqBody syncRequest) (syncResponse, er
 	}
 
 	client := &http.Client{Timeout: 12 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(cred.ServerURL, "/")+"/sync", bytes.NewReader(body))
+	syncURL := strings.TrimRight(cred.ServerURL, "/") + "/sync"
+
+	req, err := http.NewRequest(http.MethodPost, syncURL, bytes.NewReader(body))
 	if err != nil {
 		return syncResponse{}, err
 	}
@@ -540,6 +542,29 @@ func syncWithServer(cred savedCredential, reqBody syncRequest) (syncResponse, er
 	resp, err := client.Do(req)
 	if err != nil {
 		return syncResponse{}, err
+	}
+
+	// Some deployments (e.g. Railway) redirect plain HTTP to HTTPS at the edge.
+	// net/http follows 301/302 by switching POST to GET, which breaks POST requests.
+	// Detect that specific upgrade redirect and replay the original POST body.
+	if redirectsToHTTPSUpgrade(resp, syncURL) {
+		redirectedURL, parseErr := resp.Location()
+		_ = resp.Body.Close()
+		if parseErr != nil {
+			return syncResponse{}, parseErr
+		}
+
+		retryReq, reqErr := http.NewRequest(http.MethodPost, redirectedURL.String(), bytes.NewReader(body))
+		if reqErr != nil {
+			return syncResponse{}, reqErr
+		}
+		retryReq.Header.Set("Authorization", "Bearer "+cred.Token)
+		retryReq.Header.Set("Content-Type", "application/json")
+
+		resp, err = client.Do(retryReq)
+		if err != nil {
+			return syncResponse{}, err
+		}
 	}
 	defer resp.Body.Close()
 
@@ -558,6 +583,28 @@ func syncWithServer(cred savedCredential, reqBody syncRequest) (syncResponse, er
 	}
 
 	return out, nil
+}
+
+func redirectsToHTTPSUpgrade(resp *http.Response, originalURL string) bool {
+	if resp == nil {
+		return false
+	}
+
+	if resp.StatusCode != http.StatusMovedPermanently && resp.StatusCode != http.StatusFound {
+		return false
+	}
+
+	loc, err := resp.Location()
+	if err != nil {
+		return false
+	}
+
+	original, err := url.Parse(originalURL)
+	if err != nil {
+		return false
+	}
+
+	return original.Scheme == "http" && strings.EqualFold(loc.Scheme, "https") && strings.EqualFold(loc.Host, original.Host) && loc.Path == original.Path
 }
 
 func applySyncResult(ctx context.Context, previous syncState, uploaded []localEntry, resp syncResponse) error {
