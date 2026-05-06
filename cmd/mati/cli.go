@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -260,7 +262,7 @@ func parseConnectionString(s string) (savedCredential, error) {
 }
 
 func saveCredential(cred savedCredential) error {
-	ring, err := keyring.Open(keyring.Config{ServiceName: credentialService})
+	ring, err := openCredentialKeyring()
 	if err != nil {
 		return err
 	}
@@ -274,7 +276,7 @@ func saveCredential(cred savedCredential) error {
 }
 
 func loadCredential() (savedCredential, error) {
-	ring, err := keyring.Open(keyring.Config{ServiceName: credentialService})
+	ring, err := openCredentialKeyring()
 	if err != nil {
 		return savedCredential{}, err
 	}
@@ -290,6 +292,47 @@ func loadCredential() (savedCredential, error) {
 	}
 
 	return cred, nil
+}
+
+func openCredentialKeyring() (keyring.Keyring, error) {
+	fileDir, err := credentialFileDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve file keyring directory: %w", err)
+	}
+
+	ring, err := keyring.Open(keyring.Config{
+		ServiceName: credentialService,
+		AllowedBackends: []keyring.BackendType{
+			keyring.SecretServiceBackend,
+			keyring.KWalletBackend,
+			keyring.PassBackend,
+			keyring.FileBackend,
+		},
+		FileDir:          fileDir,
+		FilePasswordFunc: keyring.TerminalPrompt,
+	})
+	if err != nil {
+		if errors.Is(err, keyring.ErrNoAvailImpl) {
+			return nil, fmt.Errorf("no usable keyring backend found (tried secret-service, kwallet, pass, file). Configure one of these backends for credential storage")
+		}
+
+		return nil, err
+	}
+
+	return ring, nil
+}
+
+func credentialFileDir() (string, error) {
+	if envDir := strings.TrimSpace(os.Getenv("MARK_TIME_KEYRING_FILE_DIR")); envDir != "" {
+		return filepath.Clean(envDir), nil
+	}
+
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(configDir, "mark-time", "keyring"), nil
 }
 
 func validateCredential(cred savedCredential) error {
