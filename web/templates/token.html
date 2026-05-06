@@ -71,16 +71,8 @@
 
                 {{ if .CreatedToken }}
                 <p>
-                    New token (shown once):
-                    <code>{{ .CreatedToken }}</code>
-                </p>
-                <p>
-                    Server URL:
-                    <code>{{ .CreatedServer }}</code>
-                </p>
-                <p>
-                    CLI import string:
-                    <code>{{ .CreatedConnect }}</code>
+                    Copy and run in terminal:
+                    <code>mati auth-import --conn {{ .CreatedConnect }}</code>
                 </p>
                 {{ end }}
             </fieldset>
